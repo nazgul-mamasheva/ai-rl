@@ -119,6 +119,7 @@ public class WorldCell implements Steppable{
 		} else if(this.type.equals(CellType.NORMAL)){
 			//check status
 			//and there is a random probably that the cell with take fire by itself
+			
 			if(this.status < statusThreshold){
 				this.type = CellType.FIRE;
 				this.status = 1;		

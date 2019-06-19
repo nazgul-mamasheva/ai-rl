@@ -12,12 +12,18 @@
 package sim.app.firecontrol;
 
 import java.util.LinkedHashSet;
+import java.util.ArrayList; 
+import java.util.LinkedList;
 import java.util.Set;
+import java.util.Map;
+
+import java.util.Random;
 
 import sim.engine.SimState;
 import sim.engine.Steppable;
 import sim.util.Double3D;
 import sim.util.Int3D;
+import sim.util.Int2D;
 
 public class UAV implements Steppable{
 	private static final long serialVersionUID = 1L;
@@ -29,10 +35,9 @@ public class UAV implements Steppable{
 	public double z; //z position in the world
 	public Double3D target; //UAV target
 	public AgentAction action; //last action executed by the UAV
-	public static double communicationRange = 30; //communication range for the UAVs
-
 	// Agent's local knowledge 
 	public Set<WorldCell> knownCells; 
+	public LinkedList<Integer> visitedStates; 
 	public Task myTask;
 	
 	// Agent's settings - static because they have to be the same for all the 
@@ -43,6 +48,12 @@ public class UAV implements Steppable{
 	public static int stepToExtinguish = 10;
 	//used to remember when first started to extinguish at current location
 	private int startedToExtinguishAt = -1;
+
+    public static int statesCount;
+    public static double epsilon = 0.1;
+    public static int N = 50; //number of experiences to store in M
+
+    public int crtState;
 
 	public UAV(int id, Double3D myPosition){
 		//set agent's id
@@ -55,6 +66,10 @@ public class UAV implements Steppable{
 		this.action = null;
 		//at the beginning agents have no known cells 
 		this.knownCells = new LinkedHashSet<>();
+		this.visitedStates = new LinkedList<>();
+
+		statesCount = Ignite.statesCount;
+
 	}
 
 	// DO NOT REMOVE
@@ -98,32 +113,19 @@ public class UAV implements Steppable{
 	public void step(SimState state){
 		Ignite ignite = (Ignite)state;
 
-		//select the next action for the agent
 		AgentAction a = nextAction(ignite);
-		
-		switch(a){	
+
+		//select the next action for the agent
+		switch(a){
 		case SELECT_TASK:
-			// ------------------------------------------------------------------------
-			// this is where your task allocation logic has to go. 
-			// be careful, agents have their own knowledge about already explored cells, take that 
-			// in consideration if you want to implement an efficient strategy.
-			// TODO Implement here your task allocation strategy
-			System.err.println("TODO: and now? Use one of methods for tasks assignment!");
 
-			selectTask(); //<- change the signature if needed
+			selectTask(ignite); 
 
-			this.action = a;
+			this.action = a; 
 			break;
-
 		case SELECT_CELL:
-			// ------------------------------------------------------------------------
-			// this is where your random walk or intra-task allocation logic has to go. 
-			// be careful, agents have their own knowledge about already explored cells, take that 
-			// in consideration if you want to implement an efficient strategy.
-			// TODO Implement here your random walk or intra-task allocation strategy
-			System.err.println("TODO: and now? Use random walk or task assignment!");
 
-			selectCell(); //<- change the signature if needed
+			selectCell(ignite); 
 			
 		case MOVE:
 			move(state);
@@ -143,17 +145,11 @@ public class UAV implements Steppable{
 			break;
 
 		default:	
-			System.exit(-1);
+			break;
 		}
 	}
 
-	/**
-	 * What to do next?
-	 * TODO Feel free to modify this at your own will in case you have a better 
-	 * strategy
-	 */ 
 	private AgentAction nextAction(Ignite ignite){
-		//if I do not have a task I need to take one
 		if(this.myTask == null){
 			return AgentAction.SELECT_TASK;
 		}
@@ -164,58 +160,129 @@ public class UAV implements Steppable{
 		//else, if I have a target and task I need to move toward the target
 		//check if I am over the target and in that case execute the right action;
 		//if not, continue to move toward the target
-		else if(this.target.equals(new Double3D(x, y, z))){
+		else if(this.target.equals(ignite.air.discretize(new Double3D(x, y, z)))){
 			//if on fire then extinguish, otherwise move on
 			WorldCell cell = (WorldCell)ignite.forest.field[(int) x][(int) y];
+
 			//store the knowledge for efficient selection
 			this.knownCells.add(cell);
-
-			//TODO maybe, you can share the knowledge about the just extinguished cell here!
 
 			if(cell.type.equals(CellType.FIRE))
 				return AgentAction.EXTINGUISH;
 			else
 				return AgentAction.SELECT_CELL;
 
-		}else{
+		} else{
 			return AgentAction.MOVE;
 		}		
 	}
 
-	/**
-	 * Take the centroid of the fire and its expected radius and extract the new
-	 * task for the agent.
-	 */
-	private void selectTask() {
-		//remember to set the new task at the end of the procedure
-		Task newTask = null;
+	private void selectTask(Ignite ignite){
+		this.myTask = ignite.task;
+		this.target = new Double3D(this.myTask.centroid.x, this.myTask.centroid.y, z);
 		
-		// TODO
-		System.err.println("TODO: implement here your strategy for selection/auction");
-		
-		try{
-			this.myTask = newTask;
-			this.target = new Double3D(newTask.centroid.x, newTask.centroid.y, z);
-		}catch(NullPointerException e){
-			System.err.println("Something is null, have you forgetten to implement some part?");
-		}
+		int state = this.myTask.centroid.y * ignite.width + this.myTask.centroid.x;
+       	this.crtState = state;
+       	this.visitedStates.add(this.crtState);
+
+		ignite.reward = ignite.reward + this.getR(ignite, crtState);
 	}
 
 	/**
 	 * Take the centroid of the fire and its expected radius and select the next 
 	 * cell that requires closer inspection or/and foam. 
 	 */
-	private void selectCell() {
-		//remember to set the new target at the end of the procedure
-		Double3D newTarget = null;
-		
-		// TODO		
-		//the cell selection should be inside myTask area.
-		System.err.println("TODO: implement here your strategy for exploration");
-		
-		this.target = newTarget;
+	private void selectCell(Ignite ignite) {
+
+        Random rand = new Random();
+
+        int nextState;
+        if(rand.nextDouble() > this.epsilon) {
+        
+			nextState = this.eGreedy(ignite, crtState);
+        } else {
+
+        	int[] actionsFromCurrentState = ignite.possibleActionsFromState(ignite, crtState);
+
+       		int index = rand.nextInt(actionsFromCurrentState.length);
+        	nextState = actionsFromCurrentState[index];
+        }
+
+        double reward = getR(ignite, nextState); 
+        Buffer b = new Buffer(crtState, nextState, reward, nextState);
+
+        if(ignite.M.size() < N){
+       		ignite.M.add(b);
+        } else {
+        	ignite.M.removeFirst(); 
+       		ignite.M.add(b);
+        }
+
+        crtState = nextState;
+
+		ignite.reward = ignite.reward + this.getR(ignite, crtState);
+       	this.visitedStates.add(this.crtState); //store next state in visited states list
+            
+        int x = crtState % ignite.width;
+        int y = crtState / ignite.width;
+
+		this.target = new Double3D(x, y, z);
 	}
-	
+
+    int eGreedy(Ignite ignite, int state) {
+    	/* get all possible actions from current state, then define actions
+    	   which lead to not visited states. 
+    	   If not visited set is empty, use all possible actions
+    	*/
+        int[] actionsFromState = ignite.possibleActionsFromState(ignite, state);
+        ArrayList<Integer> temp = new ArrayList<>();
+		for(int action : actionsFromState) {
+
+            if(!this.visitedStates.contains(action)){
+            	temp.add(action);
+            }
+        }
+
+        int[] notVisitedStates = temp.stream().mapToInt(i -> i).toArray();
+
+        int[] actions = notVisitedStates;
+
+        int act = 0;
+        if(notVisitedStates.length == 0){
+        	actions = actionsFromState;
+        } 
+
+        double maxValue = Double.NEGATIVE_INFINITY;
+        int counter = 0;
+        for (int action : actions) {
+            double value = Ignite.Q[state][action];
+            if (value > maxValue){
+                maxValue = value;
+                act = action;
+            }
+        }
+
+        return act;
+    }
+
+    //get reward
+	double getR(Ignite ignite, int nextState){
+		WorldCell nextCell = (WorldCell)ignite.forest.field[nextState % ignite.width][(int)nextState / ignite.width];
+
+		double r = 0.0;
+		if(nextCell.type.equals(CellType.NORMAL)){
+			r = 0.0;
+		} else if(nextCell.type.equals(CellType.EXTINGUISHED)){
+			r = -0.25;
+		} else if(nextCell.type.equals(CellType.FIRE)){
+			r = 1.0;
+		} else if(nextCell.type.equals(CellType.BURNED)){
+			r = -0.5;
+		}
+
+		return r;
+	}
+
 	/**
 	 * Move the agent toward the target position
 	 * The agent moves at a fixed given velocity
@@ -271,58 +338,6 @@ public class UAV implements Steppable{
 			return true;
 		}		
 		return false;
-	}
-
-	/**
-	 * COMMUNICATION
-	 * Check if the input location is within communication range
-	 */
-	public boolean isInCommunicationRange(Double3D otherLoc){
-		Double3D myLoc = new Double3D(x,y,z);
-		return myLoc.distance(otherLoc) <= UAV.communicationRange;
-	}
-
-	/**
-	 * COMMUNICATION
-	 * Send a message to the team
-	 */
-	public void sendData(DataPacket packet){
-		//TODO
-	}
-
-	/**
-	 * COMMUNICATION
-	 * Receive a message from the team
-	 */
-	public void receiveData(DataPacket packet){
-		//TODO
-
-		//hint for a possible flooding strategy: 
-		//if: (neverReceived(packet) && packet.origin != this) -> sendData(packet)
-	}
-
-	/**
-	 * COMMUNICATION
-	 * Retrieve the status of all the agents in the communication range.
-	 * @return an array of size Ignite.tasks().size+1 where at position i you have 
-	 * the number of agents enrolled in task i (i.e. Ignite.tasks().get(i)). 
-	 * 
-	 * HINT: you can easily assume that the number of uncommitted agents is equal to:
-	 * Ignite.numUAVs - sum of all i in the returned array
-	 */
-	public int[] retrieveAgents(Ignite ignite){
-		int[] status = new int[ignite.tasks.size()];
-		
-		for(Object obj : ignite.UAVs){ //count also this uav
-			UAV other = (UAV) obj;
-			if(isInCommunicationRange(new Double3D(other.x, other.y, other.z))){
-				Task task = other.myTask;
-				if(task != null)
-					status[ignite.tasks.indexOf(task)]++;
-			}
-		}
-		
-		return status;
 	}
 	
 	@Override

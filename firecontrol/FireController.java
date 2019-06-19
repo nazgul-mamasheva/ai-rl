@@ -25,7 +25,6 @@ public class FireController implements Steppable{
 			try {
 				FileWriter fw = new FileWriter(new File(fileName),true);
 				BufferedWriter bwr = new BufferedWriter(fw);
-				bwr.append("TODO");
 				bwr.flush();
 				bwr.close();
 			} catch (IOException e) {

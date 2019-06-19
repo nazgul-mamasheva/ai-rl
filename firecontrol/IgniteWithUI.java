@@ -32,7 +32,7 @@ public class IgniteWithUI extends GUIState
 	public JFrame displayFrame;
 
 	public static void main(String[] args){
-		new IgniteWithUI().createController();  // randomizes by currentTimeMillis
+		new IgniteWithUI().createController(); 
 	}
 
 	Continuous3DPortrayal2D airPortrayal = new Continuous3DPortrayal2D();

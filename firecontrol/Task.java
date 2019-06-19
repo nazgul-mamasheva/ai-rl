@@ -61,8 +61,8 @@ public class Task{
 			//if it was a border cell
 			if(radius == pos.distance(centroid)){
 				//update the radius
+				radius = 0;
 				for(WorldCell wc : this.cells){
-					radius = 0;
 					pos = new Int2D(wc.x, wc.y);
 					this.radius = Math.max(pos.distance(centroid), radius);
 				}
