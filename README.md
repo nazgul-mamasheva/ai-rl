@@ -5,4 +5,5 @@ Reinforcement Learning (RL) project for Probabilistic Reasoning and Learning cou
 “Fire Control”
 
 Reinforcement Learning (RL)
+
 Dynamic Q-learning with Experience Replay (DQLER)
